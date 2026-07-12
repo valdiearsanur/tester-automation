@@ -1,0 +1,10 @@
+---
+- name: Wait for specified seconds
+  wait_for:
+    timeout: "{{ task_config.seconds }}"
+  delegate_to: localhost
+
+- name: Set task output
+  set_fact:
+    task_output:
+      waited: "{{ task_config.seconds }}"

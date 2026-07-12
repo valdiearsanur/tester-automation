@@ -1,0 +1,191 @@
+{
+  "case": "jbatik_order_test",
+  "description": "Verify jBatik protected order API works correctly using simulated login",
+  "tasks": [
+    {
+      "task_type": "curl",
+      "name": "trigger_get_csrf",
+      "config": {
+        "url": "http://localhost:8000/api/v1/jbatik/csrf",
+        "method": "GET",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "body": {}
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "compare_json",
+      "name": "verify_csrf_status",
+      "config": {
+        "source_task": "trigger_get_csrf",
+        "field": "status_code",
+        "expected": 200,
+        "match_mode": "full"
+      }
+    },
+    {
+      "task_type": "curl",
+      "name": "trigger_register_user",
+      "config": {
+        "url": "http://localhost:8000/api/customer/register",
+        "method": "POST",
+        "source_auth_task": "trigger_get_csrf",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "first_name": "E2E",
+          "last_name": "Order User",
+          "email": "e2e_order_{{ lookup('pipe', 'date +%s') }}@jbatik.com",
+          "password": "Password123!",
+          "password_confirmation": "Password123!"
+        }
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "compare_json",
+      "name": "verify_register_status",
+      "config": {
+        "source_task": "trigger_register_user",
+        "field": "status_code",
+        "expected": 200,
+        "match_mode": "full"
+      }
+    },
+    {
+      "task_type": "curl",
+      "name": "trigger_get_csrf_after_login",
+      "config": {
+        "url": "http://localhost:8000/api/v1/jbatik/csrf",
+        "method": "GET",
+        "source_auth_task": "trigger_register_user",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "body": {}
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "curl",
+      "name": "trigger_create_design",
+      "config": {
+        "url": "http://localhost:8000/api/v1/jbatik/user/designs",
+        "method": "POST",
+        "source_auth_task": "trigger_get_csrf_after_login",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "name": "E2E Test Design",
+          "layout": "bandana-1",
+          "thumbnail_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        }
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "compare_json",
+      "name": "verify_create_design",
+      "config": {
+        "source_task": "trigger_create_design",
+        "field": "status_code",
+        "expected": 201,
+        "match_mode": "full"
+      }
+    },
+    {
+      "task_type": "curl",
+      "name": "trigger_place_order",
+      "config": {
+        "url": "http://localhost:8000/api/v1/jbatik/orders",
+        "method": "POST",
+        "source_auth_task": "trigger_get_csrf_after_login",
+        "inject_slug_from": "trigger_create_design",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "orderData": {
+            "addressMode": "new",
+            "qty": 1,
+            "newAddr": {
+              "firstName": "E2E",
+              "lastName": "Order",
+              "email": "e2e_order@example.com",
+              "phone": "08123456789",
+              "line": "Test Address",
+              "city": "Jakarta",
+              "state": "DKI Jakarta",
+              "zip": "11480",
+              "country": "ID"
+            },
+            "courier": "jne",
+            "courier_company": "JNE",
+            "courier_type": "REG",
+            "shippingName": "JNE REG",
+            "shippingPrice": 10000,
+            "itemPrice": 150000,
+            "payment": "alchemy_xendit",
+            "name": "E2E User"
+          }
+        }
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "compare_json",
+      "name": "verify_place_order",
+      "config": {
+        "source_task": "trigger_place_order",
+        "field": "status_code",
+        "expected": 201,
+        "match_mode": "full"
+      }
+    },
+    {
+      "task_type": "curl",
+      "name": "trigger_xendit_webhook",
+      "config": {
+        "url": "http://localhost:8000/xendit/webhook",
+        "method": "POST",
+        "inject_external_id_from": "trigger_place_order",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "x-callback-token": "5kbadQZ9HjRrHJpW0cyfz7wZ9y5v5EHibY3TUd9vnwUIOyIf"
+        },
+        "body": {
+          "updated": "2017-02-15T11:01:52.896Z",
+          "created": "2017-02-15T11:01:52.896Z",
+          "payment_id": "1487156512722",
+          "callback_virtual_account_id": "58a434ba39cc9e4a230d5a2b",
+          "owner_id": "5824128aa6f9f9b648be9d76",
+          "account_number": "1001470126",
+          "bank_code": "MANDIRI",
+          "amount": 80000,
+          "transaction_timestamp": "2017-02-15T11:01:52.722Z",
+          "merchant_code": "88464",
+          "id": "58a435201b6ce2a355f46070"
+        }
+      },
+      "output_format": "json"
+    },
+    {
+      "task_type": "compare_json",
+      "name": "verify_xendit_webhook",
+      "config": {
+        "source_task": "trigger_xendit_webhook",
+        "field": "status_code",
+        "expected": 200,
+        "match_mode": "full"
+      }
+    }
+  ]
+}

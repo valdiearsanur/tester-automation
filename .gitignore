@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+test_env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Ansible
+*.retry
+.ansible/
+
+# Reports
+reports/
+*.html
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup folders
+__old*/
+
+# Environment
+.env
+.env.local
+
+# Sensitive config
+config/*.yml
+!config/databases.yml
+
+# Test cases
+test_cases/*
+!test_cases/jbatik_e2e_catalog.json
+!test_cases/jbatik_e2e_order.json
+!test_cases/jbatik_e2e_protected.json
+!test_cases/template.json
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,43 @@
+---
+- name: FTP Operations
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Variables that can be overridden via --extra-vars
+    ftp_host: "{{ lookup('env', 'FTP_HOST') | default('ftp://103.229.73.57') | regex_replace('ftp://', '') }}"
+    ftp_user: "{{ lookup('env', 'FTP_USER') | default('jbatikgogo') }}"
+    ftp_pass: "{{ lookup('env', 'FTP_PASS') | default('') }}"
+    ftp_dir: "/storage/logs"
+    ftp_file: "jbatik-{{ ansible_date_time.date }}.log"
+    operation: "list" # can be 'list' or 'check_file'
+
+  tasks:
+    - name: Ensure curl is installed
+      command: which curl
+      register: curl_check
+      changed_when: false
+
+    - name: Perform FTP Directory Listing
+      command: >
+        curl -s -u "{{ ftp_user }}:{{ ftp_pass }}" "ftp://{{ ftp_host }}{{ ftp_dir }}/"
+      register: ftp_list_output
+      when: operation == 'list'
+      changed_when: false
+
+    - name: Display FTP Directory Listing
+      debug:
+        msg: "{{ ftp_list_output.stdout_lines }}"
+      when: operation == 'list' and ftp_list_output.stdout is defined
+
+    - name: Check for specific file in FTP directory
+      command: >
+        curl -s -I -u "{{ ftp_user }}:{{ ftp_pass }}" "ftp://{{ ftp_host }}{{ ftp_dir }}/{{ ftp_file }}"
+      register: ftp_file_check
+      when: operation == 'check_file'
+      changed_when: false
+      failed_when: ftp_file_check.rc != 0 or '213' not in ftp_file_check.stdout
+
+    - name: Display File Check Result
+      debug:
+        msg: "File {{ ftp_file }} exists in {{ ftp_dir }} on {{ ftp_host }}"
+      when: operation == 'check_file'

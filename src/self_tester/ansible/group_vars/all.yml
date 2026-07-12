@@ -1,0 +1,3 @@
+---
+# Global variables for test automation
+config_file: "{{ playbook_dir }}/../config/databases.yml"

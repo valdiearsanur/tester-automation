@@ -1,0 +1,19 @@
+---
+- name: Execute {{ task_def.task_type }} task - {{ task_def.name }}
+  include_role:
+    name: "{{ task_def.task_type }}_task"
+  vars:
+    task_name: "{{ task_def.name }}"
+    task_config: "{{ task_def.config }}"
+    output_format: "{{ task_def.output_format | default('json') }}"
+  register: task_execution
+
+- name: Write task output to file
+  copy:
+    content: "{{ task_output | to_json }}"
+    dest: "{{ outputs_dir }}/{{ task_def.name }}.json"
+
+- name: Store task output on success
+  set_fact:
+    task_outputs: "{{ task_outputs | combine({task_def.name: task_output}) }}"
+    task_results: "{{ task_results | combine({task_def.name: {'success': true, 'output': task_output}}) }}"

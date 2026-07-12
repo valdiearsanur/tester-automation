@@ -1,0 +1,31 @@
+---
+# Resolve since_ctime for delta queries (ctime > previous execution); use __SINCE_CTIME__ placeholder
+- name: Load since_task output from file (avoids task_outputs template recursion)
+  slurp:
+    src: "{{ outputs_dir }}/{{ (task_config.since_task ~ '.json') if (task_config.since_task is defined and task_config.since_task | length > 0) else '_empty.json' }}"
+  register: _since_file
+
+- name: Set resolved SQL query
+  set_fact:
+    _sql_query: "{{ _sql_query_resolved }}"
+  vars:
+    _base_query: "{{ task_config.query }}"
+    _has_since: "{{ task_config.since_task is defined and task_config.since_task | length > 0 }}"
+    _prev_out: "{{ (_since_file.content | b64decode | from_json) if (_since_file is defined and _since_file.content is defined) else [] }}"
+    _since_ctime: "{{ ((_prev_out[0].max_ctime) if (_prev_out is sequence and _prev_out | length > 0 and _prev_out[0] is mapping and 'max_ctime' in _prev_out[0]) else ((_prev_out | map(attribute='ctime') | list | max) if (_prev_out is sequence and _prev_out | length > 0) else 0)) | default(0) }}"
+    _sql_query_resolved: "{{ (_base_query.replace('__SINCE_CTIME__', _since_ctime | string)) if _has_since else _base_query }}"
+
+- name: Execute SQL query
+  sql_executor:
+    db_name: "{{ task_config.db_name }}"
+    query: "{{ _sql_query }}"
+    config_file: "{{ config_file }}"
+  register: sql_result
+
+- name: Log SQL result
+  debug:
+    msg: "SQL {{ task_name }}: {{ sql_result.result }}"
+
+- name: Set task output
+  set_fact:
+    task_output: "{{ sql_result.result }}"

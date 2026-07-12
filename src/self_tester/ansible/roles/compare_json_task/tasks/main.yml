@@ -1,0 +1,14 @@
+---
+- name: Compare JSON
+  json_comparator:
+    source_task: "{{ task_config.source_task }}"
+    source_output_file: "{{ outputs_dir }}/{{ task_config.source_task }}.json"
+    field: "{{ task_config.field | default(omit) }}"
+    expected: "{{ omit if (task_config.expected_task is defined and task_config.expected_task | length > 0) else (task_config.expected | default(omit)) }}"
+    expected_output_file: "{{ (outputs_dir + '/' + task_config.expected_task + '.json') if (task_config.expected_task is defined and task_config.expected_task | length > 0) else omit }}"
+    match_mode: "{{ task_config.match_mode | default('partial') }}"
+  register: compare_result
+
+- name: Set task output
+  set_fact:
+    task_output: "{{ compare_result }}"

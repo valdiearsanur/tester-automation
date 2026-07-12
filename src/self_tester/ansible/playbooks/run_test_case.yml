@@ -1,0 +1,77 @@
+---
+- name: Execute Test Case
+  hosts: localhost
+  gather_facts: false
+  vars:
+    task_outputs: {}
+    task_results: {}
+    test_result:
+      case: ""
+      description: ""
+      success: false
+      errors: []
+  
+  tasks:
+    - name: Resolve test_case_path to absolute (if relative, resolve from current working directory)
+      shell: |
+        if [[ "{{ test_case_path }}" == /* ]]; then
+          echo "{{ test_case_path | expanduser }}"
+        else
+          echo "$(pwd)/{{ test_case_path | expanduser }}"
+        fi
+      register: _path_resolve
+      changed_when: false
+      
+    - name: Load test case
+      include_vars:
+        file: "{{ _path_resolve.stdout }}"
+        name: test_case
+
+    - name: Set config and outputs paths
+      set_fact:
+        config_file: "{{ playbook_dir }}/../../config/databases.yml"
+        outputs_dir: "/tmp/self_tester_outputs"
+    
+    - name: Set test case info
+      set_fact:
+        test_result:
+          case: "{{ test_case.case }}"
+          description: "{{ test_case.description | default('') }}"
+    
+    - name: Ensure outputs directory exists
+      file:
+        path: "{{ outputs_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create empty placeholder for sql_query when no since_task
+      copy:
+        content: "[]"
+        dest: "{{ outputs_dir }}/_empty.json"
+    
+    - name: Execute all tasks
+      include_tasks: execute_task.yml
+      loop: "{{ test_case.tasks }}"
+      loop_control:
+        loop_var: task_def
+    
+    - name: Collect failed tasks
+      set_fact:
+        failed_tasks: "{{ task_results | dict2items | selectattr('value.success', 'equalto', false) | list }}"
+    
+    - name: Determine test success
+      set_fact:
+        test_result:
+          case: "{{ test_result.case }}"
+          description: "{{ test_result.description }}"
+          success: "{{ failed_tasks | length == 0 }}"
+          errors: "{{ failed_tasks | map(attribute='value.error') | list | default([]) }}"
+          task_results: "{{ task_results }}"
+          task_outputs: "{{ task_outputs }}"
+    
+    - name: Display test result
+      debug:
+        msg:
+          - "Test Case: {{ test_result.case }}"
+          - "Success: {{ test_result.success }}"
+          - "Errors: {{ test_result.errors }}"

@@ -1,0 +1,38 @@
+---
+- name: Run All Test Cases
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_cases_dir: "{{ playbook_dir }}/../../test_cases"
+    all_results: []
+  
+  tasks:
+    - name: Find all test case JSON files
+      find:
+        paths: "{{ test_cases_dir }}"
+        patterns: "*.json"
+      register: test_case_files
+    
+    - name: Run each test case
+      include_tasks: run_test_case.yml
+      vars:
+        test_case_path: "{{ item.path }}"
+        config_file: "{{ playbook_dir }}/../../config/databases.yml"
+      loop: "{{ test_case_files.files }}"
+      loop_control:
+        loop_var: test_case_file_item
+      register: test_results
+    
+    - name: Collect all results
+      set_fact:
+        all_results: "{{ all_results + [item.ansible_facts.test_result] }}"
+      loop: "{{ test_results.results | default([]) }}"
+      loop_control:
+        loop_var: item
+      when: item.ansible_facts is defined and item.ansible_facts.test_result is defined
+    
+    - name: Generate report
+      include_tasks: generate_report.yml
+      vars:
+        test_results: "{{ all_results }}"
+      when: all_results | length > 0

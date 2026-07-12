@@ -1,0 +1,23 @@
+---
+# Database and cache configurations
+# Copy to databases.yml and fill in your credentials (databases.yml is gitignored)
+
+databases:
+  local_db:
+    connection: "mysql+pymysql://user:password@host:port/database"
+    pool_size: 5
+    pool_recycle: 3600
+  staging_db:
+    connection: "mysql+pymysql://user:password@host:port/database"
+    pool_size: 5
+    pool_recycle: 3600
+
+cache:
+  redis_test:
+    host: "localhost"
+    port: 6379
+    db: 0
+  seller_test:
+    host: "your-redis-host"
+    port: 6379
+    db: 0

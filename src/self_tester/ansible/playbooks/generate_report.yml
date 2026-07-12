@@ -1,0 +1,23 @@
+---
+- name: Generate CSV Report
+  delegate_to: localhost
+  run_once: true
+  vars:
+    report_dir: "{{ playbook_dir }}/../../reports"
+    csv_report_file: "{{ report_dir }}/test_report.csv"
+  
+  tasks:
+    - name: Ensure reports directory exists
+      file:
+        path: "{{ report_dir }}"
+        state: directory
+    
+    - name: Generate CSV report
+      report_generator:
+        test_results: "{{ test_results }}"
+        output_path: "{{ csv_report_file }}"
+      when: test_results is defined
+    
+    - name: Display report location
+      debug:
+        msg: "CSV report generated at {{ csv_report_file }}"

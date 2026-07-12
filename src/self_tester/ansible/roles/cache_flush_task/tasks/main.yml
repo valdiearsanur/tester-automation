@@ -1,0 +1,11 @@
+---
+- name: Flush cache (invalidate all keys)
+  cache_manager:
+    operation: flush
+    cache_name: "{{ task_config.cache_name }}"
+    config_file: "{{ config_file }}"
+  register: cache_result
+
+- name: Set task output
+  set_fact:
+    task_output: "{{ cache_result }}"

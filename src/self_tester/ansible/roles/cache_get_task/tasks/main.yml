@@ -1,0 +1,12 @@
+---
+- name: Get cache value
+  cache_manager:
+    operation: get
+    cache_name: "{{ task_config.cache_name }}"
+    key: "{{ task_config.key }}"
+    config_file: "{{ config_file }}"
+  register: cache_result
+
+- name: Set task output
+  set_fact:
+    task_output: "{{ cache_result }}"

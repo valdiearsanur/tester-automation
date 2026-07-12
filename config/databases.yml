@@ -1,0 +1,30 @@
+# Database Configurations Example
+# You can define multiple environments (e.g., local, staging, production)
+# or multiple specific databases.
+
+local_db:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: ""
+  db: my_database
+
+staging_db:
+  host: db.staging.example.com
+  port: 3306
+  user: staging_user
+  password: "staging_password"
+  db: staging_database
+
+# FTP / SFTP Configurations Example
+local_ftp:
+  host: 127.0.0.1
+  port: 21
+  user: ftp_user
+  password: "ftp_password"
+
+staging_ftp:
+  host: ftp.staging.example.com
+  port: 22
+  user: sftp_user
+  password: "sftp_password"

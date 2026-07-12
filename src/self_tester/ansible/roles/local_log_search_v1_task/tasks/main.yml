@@ -1,0 +1,20 @@
+---
+- name: Search log files for pattern
+  local_log_search:
+    file_pattern: "{{ task_config.file_pattern }}"
+    search_pattern: "{{ task_config.search_pattern }}"
+    use_regex: "{{ task_config.use_regex | default(false) }}"
+  register: log_result
+
+- name: Set task output
+  set_fact:
+    task_output:
+      file_pattern: "{{ log_result.file_pattern }}"
+      search_pattern: "{{ log_result.search_pattern }}"
+      files_searched: "{{ log_result.files_searched }}"
+      total_matches: "{{ log_result.total_matches }}"
+      results: "{{ log_result.results }}"
+
+- name: Display log search output
+  debug:
+    msg: "{{ task_output | to_nice_json }}"

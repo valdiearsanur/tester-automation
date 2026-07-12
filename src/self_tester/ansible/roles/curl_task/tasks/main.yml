@@ -1,0 +1,74 @@
+---
+- name: Load body from file if body_file specified
+  slurp:
+    src: "{{ task_config.body_file }}"
+  register: _body_file_content
+  when: task_config.body_file is defined
+
+- name: Set request body (from file or inline)
+  set_fact:
+    _request_body: "{{ (_body_file_content.content | b64decode | from_json) if task_config.body_file is defined else (task_config.body | default({})) }}"
+
+- name: Inject projectSlug into body if requested
+  set_fact:
+    _request_body: "{{ _request_body | combine({'projectSlug': task_outputs[task_config.inject_slug_from].body.slug}) }}"
+  when: task_config.inject_slug_from is defined and task_config.inject_slug_from in task_outputs
+
+- name: Inject external_id into body if requested
+  set_fact:
+    _request_body: "{{ _request_body | combine({'external_id': task_outputs[task_config.inject_external_id_from].body.orderSlug}) }}"
+  when: task_config.inject_external_id_from is defined and task_config.inject_external_id_from in task_outputs
+
+- name: Set request headers (inject auth from previous task if source_auth_task provided)
+  set_fact:
+    _request_headers: >-
+      {{
+        task_config.headers | default({}) | combine(
+          ({
+            'X-CSRF-TOKEN': (task_outputs[task_config.source_auth_task].body.token if (task_outputs[task_config.source_auth_task].body is mapping and 'token' in task_outputs[task_config.source_auth_task].body) else omit),
+            'Cookie': task_outputs[task_config.source_auth_task].cookies_string | default(omit)
+          } if task_config.source_auth_task is defined and task_config.source_auth_task in task_outputs else {})
+        )
+      }}
+
+- name: Debug request headers
+  debug:
+    var: _request_headers
+
+- name: Resolve URL
+  set_fact:
+    _request_url: >-
+      {{
+        task_config.url | replace('{' + task_config.inject_url_key + '}', task_outputs[task_config.inject_url_from].body[task_config.inject_url_key] | string)
+      }}
+  when: task_config.inject_url_from is defined and task_config.inject_url_key is defined and task_config.inject_url_from in task_outputs
+
+- name: Execute HTTP request with uri module
+  ansible.builtin.uri:
+    url: "{{ _request_url | default(task_config.url) }}"
+    method: "{{ task_config.method | default('POST') }}"
+    headers: "{{ _request_headers }}"
+    body_format: "{{ 'json' if (task_config.body_file is defined or task_config.body is defined) else omit }}"
+    body: "{{ _request_body | default(omit) }}"
+    return_content: true
+    validate_certs: false
+    status_code: [200, 201, 400, 401, 403, 404, 500]
+  register: uri_result
+
+- name: Build task output (uri result mapped to curl-like shape for compare_json)
+  set_fact:
+    task_output:
+      status_code: "{{ uri_result.status }}"
+      # uri module returns response headers as top-level keys; extract into headers dict
+      headers: "{{ _uri_headers }}"
+      body: "{{ uri_result.json | default(uri_result.content) | default('') }}"
+      request_id: "{{ _uri_headers.get('X-Request-ID') or _uri_headers.get('x_request_id') | default(omit) }}"
+      cookies: "{{ uri_result.cookies | default({}) }}"
+      cookies_string: "{{ uri_result.cookies_string | default('') }}"
+  vars:
+    _uri_exclude: ["status", "url", "elapsed", "json", "content", "content_type", "msg", "redirected", "cookies", "cookies_string", "changed", "invocation", "failed", "failed_when_result"]
+    _uri_headers: "{{ (uri_result | dict2items | rejectattr('key', 'in', _uri_exclude)) | items2dict | default({}) }}"
+
+- name: Log curl request and response
+  debug:
+    msg: "Uri {{ task_name }}: status={{ task_output.status_code }}, request_body={{ task_config.body | default({}) | to_json }}, response_body={{ task_output.body | to_json }}"
