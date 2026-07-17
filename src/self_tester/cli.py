@@ -15,7 +15,7 @@ def main():
         help="A specific .json test file to run (via ansible), or a folder containing multiple tests (via suite runner)."
     )
     parser.add_argument("--report", default=None, help="Report output path (suite only)")
-    parser.add_argument("--config", default=None, help="Path to databases.yml (suite only)")
+    parser.add_argument("--config", default=None, help="Path to config/databases.yml")
     parser.add_argument("--quiet", "-q", action="store_true", help="Quiet mode (suite only)")
     
     args = parser.parse_args()
@@ -27,7 +27,8 @@ def main():
         
     if target_path.is_file() and target_path.suffix == '.json':
         # Single test case via ansible-playbook
-        run_single_test(target_path)
+        config_path = args.config if args.config else str(Path.cwd() / "config" / "databases.yml")
+        run_single_test(target_path, config_path)
     elif target_path.is_dir():
         # Directory of test cases via run_suite
         # We rewrite sys.argv for the run_suite module
@@ -45,7 +46,7 @@ def main():
         sys.exit(1)
 
 
-def run_single_test(test_case_path: Path):
+def run_single_test(test_case_path: Path, config_path: str):
     try:
         import importlib.resources
         playbook_dir = importlib.resources.files('self_tester.ansible.playbooks')
@@ -76,7 +77,8 @@ def run_single_test(test_case_path: Path):
     cmd = [
         "ansible-playbook", 
         str(playbook_path), 
-        "-e", f"test_case_path={test_case_path}"
+        "-e", f"test_case_path={test_case_path}",
+        "-e", f"config_file={config_path}"
     ]
     
     # We must run it from the directory of the target or workspace so relative paths in tests work.

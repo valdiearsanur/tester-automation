@@ -27,9 +27,8 @@
         file: "{{ _path_resolve.stdout }}"
         name: test_case
 
-    - name: Set config and outputs paths
+    - name: Set outputs path
       set_fact:
-        config_file: "{{ playbook_dir }}/../../config/databases.yml"
         outputs_dir: "/tmp/self_tester_outputs"
     
     - name: Set test case info
