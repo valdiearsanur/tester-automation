@@ -28,3 +28,9 @@ staging_ftp:
   port: 22
   user: sftp_user
   password: "sftp_password"
+
+ftp:
+  rebex_test_server:
+    host: test.rebex.net
+    user: demo
+    password: password
