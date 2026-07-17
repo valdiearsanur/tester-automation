@@ -49,9 +49,6 @@ config/*.yml
 
 # Test cases
 test_cases/*
-!test_cases/jbatik_e2e_catalog.json
-!test_cases/jbatik_e2e_order.json
-!test_cases/jbatik_e2e_protected.json
 !test_cases/template.json
 
 # Test artifacts

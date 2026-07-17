@@ -26,6 +26,7 @@
         task_config.headers | default({}) | combine(
           ({
             'X-CSRF-TOKEN': (task_outputs[task_config.source_auth_task].body.token if (task_outputs[task_config.source_auth_task].body is mapping and 'token' in task_outputs[task_config.source_auth_task].body) else omit),
+            'X-XSRF-TOKEN': (task_outputs[task_config.source_auth_task].cookies['XSRF-TOKEN'] | urldecode if (task_outputs[task_config.source_auth_task].cookies is mapping and 'XSRF-TOKEN' in task_outputs[task_config.source_auth_task].cookies) else omit),
             'Cookie': task_outputs[task_config.source_auth_task].cookies_string | default(omit)
           } if task_config.source_auth_task is defined and task_config.source_auth_task in task_outputs else {})
         )
@@ -52,7 +53,7 @@
     body: "{{ _request_body | default(omit) }}"
     return_content: true
     validate_certs: false
-    status_code: [200, 201, 400, 401, 403, 404, 500]
+    status_code: [200, 201, 204, 400, 401, 403, 404, 500]
   register: uri_result
 
 - name: Build task output (uri result mapped to curl-like shape for compare_json)

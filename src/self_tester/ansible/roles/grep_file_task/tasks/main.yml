@@ -1,0 +1,19 @@
+---
+- name: Grep lines in file
+  grep_file:
+    file_path: "{{ task_config.file_path }}"
+    search_pattern: "{{ task_config.search_pattern }}"
+    use_regex: "{{ task_config.use_regex | default(false) }}"
+  register: grep_result
+
+- name: Set task output
+  set_fact:
+    task_output:
+      file_path: "{{ grep_result.file_path }}"
+      search_pattern: "{{ grep_result.search_pattern }}"
+      total_matches: "{{ grep_result.total_matches }}"
+      matches: "{{ grep_result.matches }}"
+
+- name: Display grep file output
+  debug:
+    msg: "{{ task_output | to_nice_json }}"

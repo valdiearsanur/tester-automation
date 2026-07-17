@@ -1,0 +1,22 @@
+---
+- name: List files on FTP server
+  ftp_list:
+    config_name: "{{ task_config.config_name | default(omit) }}"
+    config_file: "{{ config_file | default(omit) }}"
+    host: "{{ task_config.host | default(omit) }}"
+    port: "{{ task_config.port | default(omit) }}"
+    user: "{{ task_config.user | default(omit) }}"
+    password: "{{ task_config.password | default(omit) }}"
+    path: "{{ task_config.path | default('.') }}"
+    secure: "{{ task_config.secure | default(false) }}"
+  register: ftp_list_result
+
+- name: Set task output
+  set_fact:
+    task_output:
+      files: "{{ ftp_list_result.files }}"
+      path: "{{ ftp_list_result.path }}"
+
+- name: Display FTP list output
+  debug:
+    msg: "{{ task_output | to_nice_json }}"

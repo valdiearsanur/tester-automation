@@ -41,6 +41,9 @@ self-tester test_cases/
 | `curl` | `url`, `method`, `headers`, `body` | HTTP requests |
 | `local_log_search_v1` | `file_pattern`, `search_pattern`, `use_regex` | Search local log files by glob + pattern |
 | `wait` | `seconds` | Delay |
+| `ftp_list` | `host`, `user`, `password` (or `config_name`) | List files on FTP/FTPS server |
+| `ftp_download` | `host`, `user`, `password` (or `config_name`), `remote_path`, `local_path` | Download file from FTP/FTPS server |
+| `grep_file` | `file_path`, `search_pattern`, `use_regex` | Grep specific file and return matching lines |
 
 ### compare_json
 

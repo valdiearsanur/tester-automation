@@ -1,0 +1,25 @@
+---
+- name: Download file from FTP server
+  ftp_download:
+    config_name: "{{ task_config.config_name | default(omit) }}"
+    config_file: "{{ config_file | default(omit) }}"
+    host: "{{ task_config.host | default(omit) }}"
+    port: "{{ task_config.port | default(omit) }}"
+    user: "{{ task_config.user | default(omit) }}"
+    password: "{{ task_config.password | default(omit) }}"
+    remote_path: "{{ task_config.remote_path }}"
+    local_path: "{{ task_config.local_path }}"
+    secure: "{{ task_config.secure | default(false) }}"
+  register: ftp_download_result
+
+- name: Set task output
+  set_fact:
+    task_output:
+      downloaded: "{{ ftp_download_result.downloaded }}"
+      local_path: "{{ ftp_download_result.local_path }}"
+      remote_path: "{{ ftp_download_result.remote_path }}"
+      size: "{{ ftp_download_result.size }}"
+
+- name: Display FTP download output
+  debug:
+    msg: "{{ task_output | to_nice_json }}"
