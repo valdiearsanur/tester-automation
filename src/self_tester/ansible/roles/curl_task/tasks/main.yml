@@ -28,7 +28,7 @@
 
 - name: Inject generic field into body if requested
   set_fact:
-    _request_body: "{{ _request_body | combine({task_config.inject_body_key: (task_outputs[task_config.inject_body_from].body[task_config.inject_body_field] if (task_outputs[task_config.inject_body_from] is mapping and 'body' in task_outputs[task_config.inject_body_from]) else task_outputs[task_config.inject_body_from][0][task_config.inject_body_field])}) }}"
+    _request_body: "{{ _request_body | combine({task_config.inject_body_key: (task_outputs[task_config.inject_body_from].body[0][task_config.inject_body_field] if (task_outputs[task_config.inject_body_from].body is sequence and task_outputs[task_config.inject_body_from].body is not string) else task_outputs[task_config.inject_body_from].body[task_config.inject_body_field])}) }}"
   when: task_config.inject_body_from is defined and task_config.inject_body_key is defined and task_config.inject_body_field is defined and task_config.inject_body_from in task_outputs
 
 - name: Build Cookie string
@@ -62,7 +62,7 @@
   set_fact:
     _request_url: >-
       {{
-        task_config.url | replace('{' + task_config.inject_url_key + '}', (task_outputs[task_config.inject_url_from].body[task_config.inject_url_key] if (task_outputs[task_config.inject_url_from] is mapping and 'body' in task_outputs[task_config.inject_url_from]) else task_outputs[task_config.inject_url_from][0][task_config.inject_url_key]) | string)
+        task_config.url | replace('{' + task_config.inject_url_key + '}', (task_outputs[task_config.inject_url_from].body[0][task_config.inject_url_key] if (task_outputs[task_config.inject_url_from].body is sequence and task_outputs[task_config.inject_url_from].body is not string) else task_outputs[task_config.inject_url_from].body[task_config.inject_url_key]) | string)
       }}
   when: task_config.inject_url_from is defined and task_config.inject_url_key is defined and task_config.inject_url_from in task_outputs
 
