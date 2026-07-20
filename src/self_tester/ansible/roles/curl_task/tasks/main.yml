@@ -5,7 +5,6 @@
     _request_body: ""
     _request_headers: ""
     _cookie_string: ""
-    _parsed_cookies_json: "{}"
 ---
 - name: Load body from file if body_file specified
   slurp:
