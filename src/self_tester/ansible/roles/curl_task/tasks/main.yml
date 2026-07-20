@@ -19,6 +19,21 @@
     _request_body: "{{ _request_body | combine({'external_id': task_outputs[task_config.inject_external_id_from].body.orderSlug}) }}"
   when: task_config.inject_external_id_from is defined and task_config.inject_external_id_from in task_outputs
 
+- name: Inject generic field into body if requested
+  set_fact:
+    _request_body: "{{ _request_body | combine({task_config.inject_body_key: (task_outputs[task_config.inject_body_from].body[task_config.inject_body_field] if (task_outputs[task_config.inject_body_from] is mapping and 'body' in task_outputs[task_config.inject_body_from]) else task_outputs[task_config.inject_body_from][0][task_config.inject_body_field])}) }}"
+  when: task_config.inject_body_from is defined and task_config.inject_body_key is defined and task_config.inject_body_field is defined and task_config.inject_body_from in task_outputs
+
+- name: Build Cookie string
+  set_fact:
+    _cookie_string: >-
+      {% set _c = (task_outputs['get_csrf_token'].cookies | default({})) | combine(task_outputs[task_config.source_auth_task].cookies | default({})) if ('get_csrf_token' in task_outputs and task_config.source_auth_task is defined and task_config.source_auth_task in task_outputs) else {} %}
+      {% set _cs = [] %}
+      {% for k, v in _c.items() %}
+      {% set _ = _cs.append(k ~ '=' ~ v) %}
+      {% endfor %}
+      {{ _cs | join('; ') }}
+
 - name: Set request headers (inject auth from previous task if source_auth_task provided)
   set_fact:
     _request_headers: >-
@@ -26,8 +41,8 @@
         task_config.headers | default({}) | combine(
           ({
             'X-CSRF-TOKEN': (task_outputs[task_config.source_auth_task].body.token if (task_outputs[task_config.source_auth_task].body is mapping and 'token' in task_outputs[task_config.source_auth_task].body) else omit),
-            'X-XSRF-TOKEN': (task_outputs[task_config.source_auth_task].cookies['XSRF-TOKEN'] | urldecode if (task_outputs[task_config.source_auth_task].cookies is mapping and 'XSRF-TOKEN' in task_outputs[task_config.source_auth_task].cookies) else omit),
-            'Cookie': task_outputs[task_config.source_auth_task].cookies_string | default(omit)
+            'X-XSRF-TOKEN': (task_outputs[task_config.source_auth_task].cookies['XSRF-TOKEN'] | urldecode if (task_outputs[task_config.source_auth_task].cookies is mapping and 'XSRF-TOKEN' in task_outputs[task_config.source_auth_task].cookies) else (task_outputs['get_csrf_token'].cookies['XSRF-TOKEN'] | urldecode if ('get_csrf_token' in task_outputs and task_outputs['get_csrf_token'].cookies is mapping and 'XSRF-TOKEN' in task_outputs['get_csrf_token'].cookies) else omit)),
+            'Cookie': _cookie_string | trim if (_cookie_string | trim | length > 0) else task_outputs[task_config.source_auth_task].cookies_string | default(omit)
           } if task_config.source_auth_task is defined and task_config.source_auth_task in task_outputs else {})
         )
       }}
@@ -40,7 +55,7 @@
   set_fact:
     _request_url: >-
       {{
-        task_config.url | replace('{' + task_config.inject_url_key + '}', task_outputs[task_config.inject_url_from].body[task_config.inject_url_key] | string)
+        task_config.url | replace('{' + task_config.inject_url_key + '}', (task_outputs[task_config.inject_url_from].body[task_config.inject_url_key] if (task_outputs[task_config.inject_url_from] is mapping and 'body' in task_outputs[task_config.inject_url_from]) else task_outputs[task_config.inject_url_from][0][task_config.inject_url_key]) | string)
       }}
   when: task_config.inject_url_from is defined and task_config.inject_url_key is defined and task_config.inject_url_from in task_outputs
 
@@ -53,22 +68,44 @@
     body: "{{ _request_body | default(omit) }}"
     return_content: true
     validate_certs: false
-    status_code: [200, 201, 204, 400, 401, 403, 404, 500]
+    status_code: "{{ task_config.expected_status | default([200, 201, 204, 400, 401, 403, 404, 500]) }}"
   register: uri_result
+
+- name: Parse set_cookie headers to dict
+  set_fact:
+    _parsed_cookies_json: >-
+      {% set _c = {} %}
+      {% set sc = _uri_headers.get('set-cookie', _uri_headers.get('set_cookie', [])) %}
+      {% set sc_list = sc if sc is iterable and sc is not string else [sc] %}
+      {% for c in sc_list %}
+        {% if c and '=' in c %}
+          {% set parts = c.split(';')[0].split('=', 1) %}
+          {% set _ = _c.update({parts[0]: parts[1]}) %}
+        {% endif %}
+      {% endfor %}
+      {{ _c | to_json }}
+  vars:
+    _uri_exclude: ["status", "url", "elapsed", "json", "content", "content_type", "msg", "redirected", "cookies", "cookies_string", "changed", "invocation", "failed", "failed_when_result"]
+    _uri_headers: "{{ (uri_result | dict2items | rejectattr('key', 'in', _uri_exclude)) | items2dict | default({}) }}"
 
 - name: Build task output (uri result mapped to curl-like shape for compare_json)
   set_fact:
     task_output:
       status_code: "{{ uri_result.status }}"
-      # uri module returns response headers as top-level keys; extract into headers dict
       headers: "{{ _uri_headers }}"
       body: "{{ uri_result.json | default(uri_result.content) | default('') }}"
       request_id: "{{ _uri_headers.get('X-Request-ID') or _uri_headers.get('x_request_id') | default(omit) }}"
-      cookies: "{{ uri_result.cookies | default({}) }}"
-      cookies_string: "{{ uri_result.cookies_string | default('') }}"
+      cookies: "{{ _final_cookies }}"
+      cookies_string: >-
+        {% set _cs = [] %}
+        {% for k, v in _final_cookies.items() %}
+        {% set _ = _cs.append(k ~ '=' ~ v) %}
+        {% endfor %}
+        {{ _cs | join('; ') }}
   vars:
     _uri_exclude: ["status", "url", "elapsed", "json", "content", "content_type", "msg", "redirected", "cookies", "cookies_string", "changed", "invocation", "failed", "failed_when_result"]
     _uri_headers: "{{ (uri_result | dict2items | rejectattr('key', 'in', _uri_exclude)) | items2dict | default({}) }}"
+    _final_cookies: "{{ uri_result.get('cookies', {}) if (uri_result.get('cookies', {}) is mapping and uri_result.get('cookies', {}) | length > 0) else (_parsed_cookies_json | from_json) }}"
 
 - name: Log curl request and response
   debug:
