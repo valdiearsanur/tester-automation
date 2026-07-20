@@ -1,3 +1,4 @@
+---
 - name: Clear loop variables
   set_fact:
     _request_url: ""
