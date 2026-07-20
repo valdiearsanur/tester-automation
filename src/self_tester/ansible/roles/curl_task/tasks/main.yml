@@ -1,3 +1,10 @@
+- name: Clear loop variables
+  set_fact:
+    _request_url: ""
+    _request_body: ""
+    _request_headers: ""
+    _cookie_string: ""
+    _parsed_cookies_json: "{}"
 ---
 - name: Load body from file if body_file specified
   slurp:
@@ -61,11 +68,11 @@
 
 - name: Execute HTTP request with uri module
   ansible.builtin.uri:
-    url: "{{ _request_url | default(task_config.url) }}"
+    url: "{{ _request_url if _request_url else task_config.url }}"
     method: "{{ task_config.method | default('POST') }}"
     headers: "{{ _request_headers }}"
     body_format: "{{ 'json' if (task_config.body_file is defined or task_config.body is defined) else omit }}"
-    body: "{{ _request_body | default(omit) }}"
+    body: "{{ _request_body if _request_body else omit }}"
     return_content: true
     validate_certs: false
     status_code: "{{ task_config.expected_status | default([200, 201, 204, 400, 401, 403, 404, 500]) }}"
