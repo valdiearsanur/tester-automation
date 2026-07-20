@@ -4,11 +4,12 @@ Test suite orchestrator — discover and run all .json test cases in a folder.
 
 Usage:
     python run_suite.py <folder>
-    python run_suite.py <folder> --report reports/my_run.md
+    python run_suite.py <folder> --report reports/my_run.csv
     python run_suite.py <folder> --config config/databases.yml --quiet
 """
 
 import argparse
+import csv
 import json
 import sys
 import time
@@ -99,6 +100,7 @@ def run_curl(config: dict) -> dict:
     return {
         "status_code": resp.status_code,
         "headers": dict(resp.headers),
+        "cookies": resp.cookies.get_dict(),
         "body": resp_body,
         "elapsed_ms": elapsed_ms,
     }
@@ -173,7 +175,92 @@ def run_cache(task_type: str, config: dict, config_file: str) -> dict:
     return cache_flush(cache_cfg)
 
 
+# ── inject url helper ─────────────────────────────────────────────────────────
+
+def inject_config_url(config: dict, task_outputs: dict):
+    if "inject_url_from" in config and "inject_url_key" in config:
+        from_task = config["inject_url_from"]
+        key = config["inject_url_key"]
+        if from_task in task_outputs:
+            body = task_outputs[from_task].get("body", {})
+            if isinstance(body, list) and len(body) > 0:
+                val = body[0].get(key)
+            else:
+                val = body.get(key)
+            if val:
+                # Assuming URL might contain {key} or we just append it
+                # For safety, replace {key}
+                config["url"] = config["url"].replace(f"{{{key}}}", str(val))
+
+
 # ── test case runner ──────────────────────────────────────────────────────────
+
+def run_task(task_def: dict, task_outputs: dict, config_file: str, case_outputs_dir: Path) -> dict:
+    task_name = task_def["name"]
+    task_type = task_def["task_type"]
+    cfg = task_def.get("config", {})
+    t0 = time.time()
+    
+    # Simple dependency injection
+    inject_config_url(cfg, task_outputs)
+    
+    if "source_auth_task" in cfg:
+        auth_out = task_outputs.get(cfg["source_auth_task"], {})
+        # Merge cookies from get_csrf_token and the source_auth_task
+        cookies = {}
+        if "get_csrf_token" in task_outputs:
+            cookies.update(task_outputs["get_csrf_token"].get("cookies", {}))
+        cookies.update(auth_out.get("cookies", {}))
+        
+        if cookies:
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            cfg.setdefault("headers", {})["cookie"] = cookie_str
+            
+            if "XSRF-TOKEN" in cookies:
+                import urllib.parse
+                xsrf = urllib.parse.unquote(cookies["XSRF-TOKEN"])
+                cfg.setdefault("headers", {})["X-XSRF-TOKEN"] = xsrf
+
+    try:
+        if task_type == "curl":
+            output = run_curl(cfg)
+        elif task_type == "sql_query":
+            output = run_sql_query(cfg, task_outputs, config_file)
+        elif task_type == "compare_json":
+            output = run_compare_json(cfg, task_outputs)
+        elif task_type == "wait":
+            output = run_wait(cfg)
+        elif task_type in ("cache_get", "cache_set", "cache_flush", "cache_flush_task"):
+            output = run_cache(task_type, cfg, config_file)
+        else:
+            raise NotImplementedError(f"unsupported task_type: {task_type}")
+
+        elapsed = int((time.time() - t0) * 1000)
+        task_outputs[task_name] = output
+        (case_outputs_dir / f"{task_name}.json").write_text(json.dumps(output, default=str))
+        
+        # Check expected status for curl
+        if task_type == "curl" and "expected_status" in cfg:
+            exp_status = cfg["expected_status"]
+            actual_status = output["status_code"]
+            if isinstance(exp_status, list):
+                if actual_status not in exp_status:
+                    raise AssertionError(f"Expected status in {exp_status}, got {actual_status}")
+            else:
+                if actual_status != exp_status:
+                    raise AssertionError(f"Expected status {exp_status}, got {actual_status}")
+
+        return {"name": task_name, "task_type": task_type,
+                "success": True, "error": None, "elapsed_ms": elapsed}
+
+    except Exception as exc:
+        elapsed = int((time.time() - t0) * 1000)
+        error_str = str(exc)
+        task_outputs[task_name] = {"error": error_str}
+        (case_outputs_dir / f"{task_name}.json").write_text(json.dumps({"error": error_str}))
+        return {"name": task_name, "task_type": task_type,
+                "success": False, "error": error_str, "elapsed_ms": elapsed}
+
 
 def run_test_case(tc_path: Path, config_file: str, outputs_dir: Path) -> dict:
     with open(tc_path) as f:
@@ -181,137 +268,119 @@ def run_test_case(tc_path: Path, config_file: str, outputs_dir: Path) -> dict:
 
     case_name = tc.get("case", tc_path.stem)
     description = tc.get("description", "")
-    tasks = tc.get("tasks", [])
+    
+    # Support both old flat 'tasks' schema and new phased schema
+    if "tasks" in tc and not any(k in tc for k in ["pre_conditions", "test_steps", "verifications"]):
+        # Legacy support
+        pre_cond = []
+        steps = tc.get("tasks", [])
+        verifications = []
+    else:
+        pre_cond = tc.get("pre_conditions", [])
+        steps = tc.get("test_steps", [])
+        verifications = tc.get("verifications", [])
 
     case_outputs_dir = outputs_dir / case_name
     case_outputs_dir.mkdir(parents=True, exist_ok=True)
 
     task_outputs: dict = {}
-    task_results: list = []
+    phase_results = {
+        "pre_conditions": [],
+        "test_steps": [],
+        "verifications": []
+    }
+    
+    overall_success = True
+    failed_tasks = []
 
-    for task_def in tasks:
-        task_name = task_def["name"]
-        task_type = task_def["task_type"]
-        cfg = task_def.get("config", {})
-        t0 = time.time()
+    # Run Pre-conditions
+    for t in pre_cond:
+        res = run_task(t, task_outputs, config_file, case_outputs_dir)
+        phase_results["pre_conditions"].append(res)
+        if not res["success"]:
+            overall_success = False
+            failed_tasks.append(res)
+            break  # Stop execution if pre-condition fails
+            
+    # Run Test Steps
+    if overall_success:
+        for t in steps:
+            res = run_task(t, task_outputs, config_file, case_outputs_dir)
+            phase_results["test_steps"].append(res)
+            if not res["success"]:
+                overall_success = False
+                failed_tasks.append(res)
+                break
+                
+    # Run Verifications
+    if overall_success:
+        for t in verifications:
+            res = run_task(t, task_outputs, config_file, case_outputs_dir)
+            phase_results["verifications"].append(res)
+            if not res["success"]:
+                overall_success = False
+                failed_tasks.append(res)
 
-        try:
-            if task_type == "curl":
-                output = run_curl(cfg)
-            elif task_type == "sql_query":
-                output = run_sql_query(cfg, task_outputs, config_file)
-            elif task_type == "compare_json":
-                output = run_compare_json(cfg, task_outputs)
-            elif task_type == "wait":
-                output = run_wait(cfg)
-            elif task_type in ("cache_get", "cache_set", "cache_flush", "cache_flush_task"):
-                output = run_cache(task_type, cfg, config_file)
-            else:
-                raise NotImplementedError(f"unsupported task_type: {task_type}")
+    def phase_status(results):
+        if not results: return "N/A"
+        if all(r["success"] for r in results): return "PASS"
+        return "FAIL"
 
-            elapsed = int((time.time() - t0) * 1000)
-            task_outputs[task_name] = output
-            (case_outputs_dir / f"{task_name}.json").write_text(json.dumps(output, default=str))
-            task_results.append({"name": task_name, "task_type": task_type,
-                                  "success": True, "error": None, "elapsed_ms": elapsed})
-
-        except Exception as exc:
-            elapsed = int((time.time() - t0) * 1000)
-            error_str = str(exc)
-            task_outputs[task_name] = {"error": error_str}
-            (case_outputs_dir / f"{task_name}.json").write_text(json.dumps({"error": error_str}))
-            task_results.append({"name": task_name, "task_type": task_type,
-                                  "success": False, "error": error_str, "elapsed_ms": elapsed})
-
-    failed = [t for t in task_results if not t["success"]]
     return {
         "case": case_name,
         "file": str(tc_path),
         "description": description,
-        "success": len(failed) == 0,
-        "task_results": task_results,
-        "failed_tasks": [{"name": t["name"], "error": t["error"]} for t in failed],
+        "success": overall_success,
+        "phases": phase_results,
+        "pre_cond_status": phase_status(phase_results["pre_conditions"]),
+        "steps_status": phase_status(phase_results["test_steps"]),
+        "verify_status": phase_status(phase_results["verifications"]),
+        "failed_tasks": [{"name": ft["name"], "error": ft["error"]} for ft in failed_tasks],
     }
 
 
 # ── terminal output ───────────────────────────────────────────────────────────
 
 def print_case(result: dict, quiet: bool):
-    total = len(result["task_results"])
-    passed_count = sum(1 for t in result["task_results"] if t["success"])
     badge = colored("PASS", GREEN, BOLD) if result["success"] else colored("FAIL", RED, BOLD)
-
     print(f"\n  {colored(result['case'], BOLD, CYAN)}  [{badge}]")
 
     if not quiet or not result["success"]:
-        for t in result["task_results"]:
-            tick = colored("✓", GREEN) if t["success"] else colored("✗", RED)
-            name_part = t["name"]
-            type_part = colored(f"[{t['task_type']}]", DIM)
-            time_part = colored(f"{t['elapsed_ms']}ms", DIM) if t["task_type"] not in ("compare_json", "wait") else ""
-            print(f"    {tick} {name_part} {type_part} {time_part}")
-            if not t["success"] and t["error"]:
-                print(f"        {colored(t['error'][:200], RED)}")
+        for phase_name in ["pre_conditions", "test_steps", "verifications"]:
+            results = result["phases"][phase_name]
+            if not results: continue
+            
+            print(f"    {colored(phase_name.upper(), BOLD)}")
+            for t in results:
+                tick = colored("✓", GREEN) if t["success"] else colored("✗", RED)
+                name_part = t["name"]
+                type_part = colored(f"[{t['task_type']}]", DIM)
+                time_part = colored(f"{t['elapsed_ms']}ms", DIM) if t["task_type"] not in ("compare_json", "wait") else ""
+                print(f"      {tick} {name_part} {type_part} {time_part}")
+                if not t["success"] and t["error"]:
+                    print(f"          {colored(t['error'][:200], RED)}")
 
-    print(f"    {colored(f'{passed_count}/{total} tasks', BOLD)}")
 
+# ── CSV report ────────────────────────────────────────────────────────────────
 
-# ── markdown report ───────────────────────────────────────────────────────────
-
-def write_report(results: list, folder: str, report_path: Path):
-    run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    total = len(results)
-    passed = sum(1 for r in results if r["success"])
-
-    lines = [
-        "# Test Suite Report",
-        "",
-        f"**Folder:** `{folder}`  ",
-        f"**Run at:** {run_at}  ",
-        f"**Result:** {passed}/{total} PASSED",
-        "",
-        "## Summary",
-        "",
-        "| # | Case | File | Result | Tasks | Failed Tasks |",
-        "|---|------|------|--------|-------|--------------|",
-    ]
-    for i, r in enumerate(results, 1):
-        badge = "✅ PASS" if r["success"] else "❌ FAIL"
-        tr = r["task_results"]
-        p = sum(1 for t in tr if t["success"])
-        fails = ", ".join(f"`{t['name']}`" for t in r["failed_tasks"])
-        lines.append(
-            f"| {i} | `{r['case']}` | `{Path(r['file']).name}` "
-            f"| {badge} | {p}/{len(tr)} | {fails or '-'} |"
-        )
-
-    failures = [r for r in results if not r["success"]]
-    if failures:
-        lines += ["", "## Failures", ""]
-        for r in failures:
-            lines += [f"### `{r['case']}`", ""]
-            for ft in r["failed_tasks"]:
-                lines.append(f"- **`{ft['name']}`**: {ft['error']}")
-            lines.append("")
-
-    lines += ["", "## Task Details", ""]
-    for r in results:
-        lines += [
-            f"### `{r['case']}`",
-            "",
-            f"> {r['description']}",
-            "",
-            "| Task | Type | Result | Elapsed |",
-            "|------|------|--------|---------|",
-        ]
-        for t in r["task_results"]:
-            res = "✅" if t["success"] else "❌"
-            elapsed = f"{t['elapsed_ms']}ms" if t["task_type"] not in ("compare_json", "wait") else "-"
-            lines.append(f"| `{t['name']}` | `{t['task_type']}` | {res} | {elapsed} |")
-        lines.append("")
-
+def write_csv_report(results: list, report_path: Path):
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text("\n".join(lines))
+    with open(report_path, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "Case Name", "File", "Pre-conditions", "Test Steps", "Verifications", "Overall Status", "Failure Details"
+        ])
+        for r in results:
+            fails = "; ".join(f"{ft['name']}: {ft['error']}" for ft in r["failed_tasks"])
+            writer.writerow([
+                r["case"],
+                Path(r["file"]).name,
+                r["pre_cond_status"],
+                r["steps_status"],
+                r["verify_status"],
+                "PASS" if r["success"] else "FAIL",
+                fails
+            ])
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -322,7 +391,7 @@ def main():
     )
     parser.add_argument("folder", help="Folder containing test case JSON files")
     parser.add_argument("--report", default=None,
-                        help="Report output path (default: reports/<timestamp>_report.md)")
+                        help="Report output path (default: reports/<timestamp>_report.csv)")
     parser.add_argument("--config", default=None,
                         help="Path to databases.yml (default: config/databases.yml)")
     parser.add_argument("--quiet", "-q", action="store_true",
@@ -333,17 +402,11 @@ def main():
     if not folder.exists():
         sys.exit(f"Error: folder not found: {folder}")
 
-    try:
-        import importlib.resources
-        repo_root = importlib.resources.files('self_tester')
-    except (AttributeError, ImportError):
-        repo_root = Path(__file__).parent.parent.parent
-
-    config_file = args.config or str(Path(args.folder).parent / "config" / "databases.yml")
+    config_file = args.config or str(Path.cwd() / "config" / "databases.yml")
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     outputs_dir = Path(f"/tmp/self_tester_outputs/{run_id}")
     report_path = Path(args.report) if args.report else (
-        Path(args.folder).parent / "reports" / f"{run_id}_report.md"
+        Path(args.folder).parent / "reports" / f"{run_id}_report.csv"
     )
 
     test_cases = sorted(folder.rglob("*.json"))
@@ -381,7 +444,7 @@ def main():
         + colored(f"  ({elapsed_total}s)", DIM)
     )
 
-    write_report(all_results, str(folder), report_path)
+    write_csv_report(all_results, report_path)
     print(f"Report : {report_path}")
     print()
 
